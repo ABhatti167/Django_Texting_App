@@ -1,0 +1,7 @@
+Django==5.2.4
+python-dotenv
+transformers
+torch
+google-generativeai
+SpeechRecognition
+pydub

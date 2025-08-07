@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>AI Chat</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+    <style>
+        .chat-message {
+            border: 2px solid #dedede;
+            background-color: #f1f1f1;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+            overflow: hidden;
+            max-width: 75%;
+        }
+
+        .chat-message.darker {
+            border-color: #ccc;
+            background-color: #ddd;
+        }
+
+        .time-left {
+            float: left;
+            color: #999;
+            font-size: 0.85rem;
+        }
+
+        .chat-message.user {
+            margin-left: auto;
+            background-color: #d1e7dd;
+            border-color: #badbcc;
+            text-align: right;
+        }
+
+        .chat-message.AI {
+            margin-right: auto;
+            background-color: #9bbdf1;
+            border-color: #037ff3;
+            text-align: left;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+    <div class="container-fluid mt-5 px-4">
+        <h2 class="text-center mb-4">AI Chat</h2>
+
+        <!-- Model Buttons (unchanged) -->
+        <div class="d-flex justify-content-center mb-3 gap-2 flex-wrap">
+            <a href="{% url 'ai_chat_with_model' 'dialogpt' %}?username={{ username }}"
+                class="btn btn-primary {% if model == 'dialogpt' %}active{% endif %}">
+                DialoGPT
+            </a>
+            <a href="{% url 'ai_chat_with_model' 'gemini-2.5-pro' %}?username={{ username }}"
+                class="btn btn-success {% if model == 'gemini-2.5-pro' %}active{% endif %}">
+                Gemini 2.5 Pro
+            </a>
+            <a href="{% url 'ai_chat_with_model' 'gemini-2.5-flash' %}?username={{ username }}"
+                class="btn btn-info {% if model == 'gemini-2.5-flash' %}active{% endif %}">
+                Gemini 2.5 Flash
+            </a>
+            <a href="{% url 'ai_chat_with_model' 'gemini-2.5-flash-lite' %}?username={{ username }}"
+                class="btn btn-warning {% if model == 'gemini-2.5-flash-lite' %}active{% endif %}">
+                Gemini 2.5 Flash Lite
+            </a>
+        </div>
+        <div class="d-flex justify-content-center mb-3 gap-2 flex-wrap">
+            <a href="{% url 'ai_chat_with_model' 'gemini-live-2.5-flash-preview' %}?username={{ username }}"
+                class="btn btn-danger {% if model == 'gemini-live-2.5-flash-preview' %}active{% endif %}">
+                🎤 Gemini Live
+            </a>
+            <a href="{% url 'ai_chat_with_model' 'gemini-2.0-flash' %}?username={{ username }}"
+                class="btn btn-dark {% if model == 'gemini-2.0-flash' %}active{% endif %}">
+                Gemini 2.0 Flash
+            </a>
+            <a href="{% url 'ai_chat_with_model' 'gemini-2.0-flash-lite' %}?username={{ username }}"
+                class="btn btn-secondary {% if model == 'gemini-2.0-flash-lite' %}active{% endif %}">
+                Gemini 2.0 Flash Lite
+            </a>
+            <a href="{% url 'ai_chat_with_model' 'gemini-1.5-flash' %}?username={{ username }}"
+                class="btn btn-outline-primary {% if model == 'gemini-1.5-flash' %}active{% endif %}">
+                Gemini 1.5 Flash
+            </a>
+        </div>
+
+        <div class="text-center mb-3">
+            <small class="text-muted">
+                Current model: <strong>{{ model_display }}</strong>
+                {% if model_description %} - {{ model_description }}{% endif %}
+            </small>
+        </div>
+
+        <!-- 🟢 CHAT CONTAINER (now bigger) -->
+        <div class="card mx-auto shadow" style="max-width: 1100px;">
+            <div class="card-body">
+                <div id="chat-box" style="height: 650px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
+                    <!-- Chat messages will be appended here -->
+                </div>
+
+                <form id="chat-form" class="mt-3">
+                    <input type="hidden" id="conversation_id" value="{{ conversation_id }}">
+                    <input type="hidden" id="username" value="{{ username }}">
+                    <input type="hidden" id="model" value="{{ model }}">
+
+                    {% if model_type == 'voice' %}
+                    <!-- Voice model UI -->
+                    <div class="voice-interface text-center">
+                        <div class="mb-3">
+                            <button type="button" id="voice-btn" class="btn btn-danger btn-lg">
+                                🎤 Hold to Speak
+                            </button>
+                            <div id="recording-status" class="mt-2" style="display: none;">
+                                <span class="text-danger">🔴 Recording... Release to send</span>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <small class="text-muted">This model supports voice input and output</small>
+                        </div>
+                    </div>
+                    {% else %}
+                    <!-- Text model UI -->
+                    <div class="input-group">
+                        <input type="text" id="message-input" class="form-control" placeholder="Type your message..."
+                            autocomplete="off" required />
+                        <button type="submit" class="btn btn-primary">Send</button>
+                    </div>
+                    {% endif %}
+                </form>
+
+                <div class="mt-3 text-center">
+                    <a href="{% url 'home' %}" class="btn btn-secondary">Back to Home</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const chatForm = document.getElementById('chat-form');
+        const messageInput = document.getElementById('message-input');
+        const conversationIdInput = document.getElementById('conversation_id');
+        const modelType = "{{ model_type }}";
+
+        // Voice recording variables
+        let mediaRecorder;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        // Get CSRF token
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        // Voice recording setup for Live model
+        if (modelType === 'voice') {
+            const voiceBtn = document.getElementById('voice-btn');
+            const recordingStatus = document.getElementById('recording-status');
+
+            // Request microphone access
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            recordedChunks.push(event.data);
+                        }
+                    };
+
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(recordedChunks, { type: 'audio/webm' });
+                        recordedChunks = [];
+                        await sendVoiceMessage(audioBlob);
+                    };
+                })
+                .catch(err => {
+                    console.error('Microphone access denied:', err);
+                    appendMessage('System', 'Microphone access is required for voice chat.', 'AI');
+                });
+
+            // Voice button events
+            voiceBtn.addEventListener('mousedown', startRecording);
+            voiceBtn.addEventListener('mouseup', stopRecording);
+            voiceBtn.addEventListener('mouseleave', stopRecording);
+            voiceBtn.addEventListener('touchstart', startRecording);
+            voiceBtn.addEventListener('touchend', stopRecording);
+
+            function startRecording() {
+                if (mediaRecorder && !isRecording) {
+                    recordedChunks = [];
+                    mediaRecorder.start();
+                    isRecording = true;
+                    voiceBtn.textContent = '🔴 Recording...';
+                    voiceBtn.classList.add('btn-outline-danger');
+                    voiceBtn.classList.remove('btn-danger');
+                    recordingStatus.style.display = 'block';
+                }
+            }
+
+            function stopRecording() {
+                if (mediaRecorder && isRecording) {
+                    mediaRecorder.stop();
+                    isRecording = false;
+                    voiceBtn.textContent = '🎤 Hold to Speak';
+                    voiceBtn.classList.remove('btn-outline-danger');
+                    voiceBtn.classList.add('btn-danger');
+                    recordingStatus.style.display = 'none';
+                }
+            }
+
+            async function sendVoiceMessage(audioBlob) {
+                appendMessage('You', '🎤 Voice message sent', 'user');
+
+                const data = new FormData();
+                data.append('audio', audioBlob, 'voice_message.webm');
+                data.append('conversation_id', conversationIdInput.value);
+                data.append('model', document.getElementById('model').value);
+                data.append('message_type', 'voice');
+
+                const loadingId = 'loading_' + Date.now();
+                appendMessage('AI', 'Processing voice...', 'AI', loadingId);
+
+                try {
+                    const response = await fetch("/ai-response/", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': getCookie('csrftoken'),
+                        },
+                        body: data
+                    });
+
+                    const result = await response.json();
+
+                    // Remove loading message
+                    const loadingElement = document.getElementById(loadingId);
+                    if (loadingElement) {
+                        loadingElement.remove();
+                    }
+
+                    if (result.conversation_id) {
+                        conversationIdInput.value = result.conversation_id;
+                    }
+
+                    appendMessage('AI', result.response, 'AI');
+
+                    // If response includes audio, play it
+                    if (result.audio_url) {
+                        playAudioResponse(result.audio_url);
+                    }
+
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                } catch (error) {
+                    console.error('Error:', error);
+                    const loadingElement = document.getElementById(loadingId);
+                    if (loadingElement) {
+                        loadingElement.remove();
+                    }
+                    appendMessage('AI', 'Error: Unable to process voice message.', 'AI');
+                }
+            }
+
+            function playAudioResponse(audioUrl) {
+                const audio = new Audio(audioUrl);
+                audio.play().catch(err => console.error('Audio playback failed:', err));
+            }
+        }
+
+        // Text chat for non-voice models
+        if (modelType !== 'voice') {
+            chatForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                const message = messageInput.value.trim();
+                if (!message) return;
+
+                // Show user message
+                appendMessage('You', message, 'user');
+
+                const data = new FormData();
+                data.append('message', message);
+                data.append('conversation_id', conversationIdInput.value);
+                data.append('model', document.getElementById('model').value);
+
+                // Clear input
+                messageInput.value = '';
+
+                // Show loading message
+                const loadingId = 'loading_' + Date.now();
+                appendMessage('AI', 'Thinking...', 'AI', loadingId);
+
+                try {
+                    const response = await fetch("/ai-response/", {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': getCookie('csrftoken'),
+                        },
+                        body: data
+                    });
+
+                    const result = await response.json();
+
+                    // Remove loading message
+                    const loadingElement = document.getElementById(loadingId);
+                    if (loadingElement) {
+                        loadingElement.remove();
+                    }
+
+                    // Update conversation ID if provided by server
+                    if (result.conversation_id) {
+                        conversationIdInput.value = result.conversation_id;
+                    }
+
+                    appendMessage('AI', result.response, 'AI');
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                } catch (error) {
+                    console.error('Error:', error);
+                    // Remove loading message
+                    const loadingElement = document.getElementById(loadingId);
+                    if (loadingElement) {
+                        loadingElement.remove();
+                    }
+                    appendMessage('AI', 'Error: Unable to get response.', 'AI');
+                }
+            });
+        }
+
+        function appendMessage(sender, text, userType, messageId = null) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'chat-message ' + userType;
+            if (messageId) {
+                messageElement.id = messageId;
+            }
+            messageElement.innerHTML = `<b>${sender}</b><p>${text}</p><span class="time-left">${new Date().toLocaleTimeString()}</span>`;
+            chatBox.appendChild(messageElement);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+
+</html>
