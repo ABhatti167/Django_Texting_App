@@ -5,3 +5,4 @@ torch
 google-generativeai
 SpeechRecognition
 pydub
+gtts

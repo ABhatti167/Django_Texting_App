@@ -86,10 +86,10 @@
                     url: "/getMessages/{{ room }}/",
                     success: function (response) {
                         $("#display").empty();
-                        // Alternate left and right classes
-                        response.messages.forEach(function (msg, index) {
-                            let alignmentClass = (index % 2 === 0) ? 'left' : 'right';
-                            let bgClass = 'darker';  // optional, keeps original style
+                        response.messages.forEach(function (msg) {
+                            let isOwnMessage = msg.user === "{{ username }}";
+                            let alignmentClass = isOwnMessage ? 'right' : 'left';
+                            let bgClass = isOwnMessage ? '' : 'darker';
                             let messageHtml = `
                                 <div class="chat-message ${bgClass} ${alignmentClass}">
                                     <b>${msg.user}</b>

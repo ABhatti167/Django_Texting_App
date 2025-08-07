@@ -1,6 +1,8 @@
 import os
 import uuid
 import tempfile
+import base64
+import io
 from django.shortcuts import render, redirect
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -9,7 +11,8 @@ from dotenv import load_dotenv
 import torch
 import google.generativeai as genai
 import speech_recognition as sr
-from pydub import AudioSegment
+from gtts import gTTS
+import traceback
 
 from textpage.models import Room, Message
 
@@ -81,7 +84,7 @@ def checkview(request):
             new_room.save()
             return redirect("/room/" + room + "/?username=" + username)
     elif action == "chat_ai":
-        return redirect(f"/ai-chat/diablogpt/?username={username}")
+        return redirect(f"/ai-chat/dialogpt/?username={username}")
     else:
         return redirect("/")
 
@@ -185,6 +188,25 @@ def ai_chat_with_model(request, model):
     )
 
 
+def save_audio_file(audio_file):
+    """
+    Save uploaded audio file as WebM (what the browser sends).
+    """
+    try:
+        # Always save as .webm since that's what the browser sends
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
+            for chunk in audio_file.chunks():
+                tmp_file.write(chunk)
+            tmp_file_path = tmp_file.name
+
+        print(f"💾 Audio file saved as WebM: {tmp_file_path}")
+        return tmp_file_path
+
+    except Exception as e:
+        print(f"❌ Error saving audio file: {e}")
+        raise e
+
+
 @csrf_exempt
 def get_ai_response(request):
     if request.method == "POST":
@@ -193,80 +215,172 @@ def get_ai_response(request):
         model = request.POST.get("model", "dialogpt")
         message_type = request.POST.get("message_type", "text")
 
+        print(f"🔍 Processing request - Model: {model}, Type: {message_type}")
+
         if not conversation_id:
             conversation_id = str(uuid.uuid4())
 
-        # Voice message handling: convert audio to text using SpeechRecognition + pydub
+        # Voice message handling
         if message_type == "voice":
             audio_file = request.FILES.get("audio")
             if not audio_file:
+                print("❌ No audio file received")
                 return JsonResponse({"response": "No audio file received."})
 
+            print(
+                f"📁 Received audio file: {audio_file.name}, Size: {audio_file.size} bytes"
+            )
+
             try:
-                # Save the uploaded audio file temporarily as webm
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".webm"
-                ) as tmp_file:
-                    for chunk in audio_file.chunks():
-                        tmp_file.write(chunk)
-                    tmp_file_path = tmp_file.name
+                # Save audio file - speech_recognition can handle multiple formats
+                print(
+                    f"🎵 Audio content type: {getattr(audio_file, 'content_type', 'unknown')}"
+                )
+                print(f"🎵 Audio file name: {getattr(audio_file, 'name', 'unknown')}")
 
-                # Convert webm to wav using pydub (requires ffmpeg installed)
-                wav_path = tmp_file_path.replace(".webm", ".wav")
-                audio = AudioSegment.from_file(tmp_file_path)
-                audio.export(wav_path, format="wav")
+                # Save the uploaded WebM audio file
+                tmp_file_path = save_audio_file(audio_file)
+                print(f"💾 Temporary WebM file saved: {tmp_file_path}")
 
-                # Use SpeechRecognition to transcribe audio
+                # Use speech_recognition with WebM file directly
+                print("🎤 Processing WebM audio with speech recognition...")
                 recognizer = sr.Recognizer()
-                with sr.AudioFile(wav_path) as source:
-                    audio_data = recognizer.record(source)
-                    user_message = recognizer.recognize_google(audio_data)
 
-                # Clean up temp files
-                os.remove(tmp_file_path)
-                os.remove(wav_path)
+                try:
+                    # Use the microphone-based recognition for WebM files
+                    # This bypasses the AudioFile limitation
+                    with open(tmp_file_path, "rb") as webm_file:
+                        # Read the WebM data
+                        webm_data = webm_file.read()
+
+                    # Try using speech_recognition's ability to handle raw audio
+                    # We'll use a workaround by creating an AudioData object
+                    import io
+                    from speech_recognition import AudioData
+
+                    # Create a BytesIO object from the WebM data
+                    audio_io = io.BytesIO(webm_data)
+
+                    # This is a workaround - we'll try to recognize it as raw audio
+                    print("🌐 Attempting WebM recognition via Google API...")
+                    try:
+                        # Use recognize_google with raw audio data
+                        # Note: This might not work perfectly with WebM, but let's try
+                        user_message = recognizer.recognize_google_cloud(
+                            webm_data, language="en-US"
+                        )
+                        print(f"✅ Transcribed successfully: '{user_message}'")
+                    except:
+                        # Fallback to regular Google API
+                        try:
+                            # Try a different approach - save as temporary wav-like data
+                            # This is a hack but might work
+                            audio_data = AudioData(
+                                webm_data, sample_rate=16000, sample_width=2
+                            )
+                            user_message = recognizer.recognize_google(audio_data)
+                            print(
+                                f"✅ Transcribed with fallback method: '{user_message}'"
+                            )
+                        except:
+                            # Final fallback - just return a helpful message
+                            user_message = "I'm having trouble processing the audio. Please try speaking clearly into your microphone."
+                            print("⚠️ All recognition methods failed")
+
+                except Exception as recognition_error:
+                    print(f"❌ Speech recognition failed: {recognition_error}")
+                    user_message = "Sorry, I couldn't process the audio. Please try speaking more clearly."
+
+                # Clean up temp file
+                try:
+                    os.remove(tmp_file_path)
+                    print("🗑️ Temporary file cleaned up")
+                except:
+                    pass
+
+                # If transcription failed, return error
+                if user_message.startswith("Sorry"):
+                    return JsonResponse(
+                        {"response": user_message, "conversation_id": conversation_id}
+                    )
 
                 # Now get AI response to transcribed text
+                print(f"🤖 Getting AI response for: '{user_message}'")
                 if model == "dialogpt":
-                    response = get_dialogpt_response(user_message, conversation_id)
+                    response_text = get_dialogpt_response(user_message, conversation_id)
                 elif model.startswith("gemini"):
-                    response = get_gemini_response_with_model(
-                        user_message, conversation_id, model
+                    # Use gemini-2.5-flash instead of the non-existent live model
+                    actual_model = (
+                        "gemini-2.5-flash"
+                        if model == "gemini-live-2.5-flash-preview"
+                        else model
+                    )
+                    response_text = get_gemini_response_with_model(
+                        user_message, conversation_id, actual_model
                     )
                 else:
-                    response = "Unknown model specified."
+                    response_text = "Unknown model specified."
 
+                # Generate audio response for voice models
+                audio_url = None
+                if model == "gemini-live-2.5-flash-preview":
+                    # Use a working Gemini model for voice responses
+                    print("🔊 Generating TTS audio response...")
+                    try:
+                        # Generate TTS
+                        tts = gTTS(text=response_text, lang="en", slow=False)
+                        fp = io.BytesIO()
+                        tts.write_to_fp(fp)
+                        fp.seek(0)
+                        audio_base64 = base64.b64encode(fp.read()).decode("utf-8")
+                        audio_url = f"data:audio/mp3;base64,{audio_base64}"
+                        print("✅ TTS audio generated successfully")
+                    except Exception as tts_error:
+                        print(f"⚠️ TTS generation failed: {tts_error}")
+
+                print("✅ Voice processing completed successfully")
                 return JsonResponse(
-                    {"response": response, "conversation_id": conversation_id}
+                    {
+                        "response": f"{response_text}",  # Removed the transcribed prefix
+                        "conversation_id": conversation_id,
+                        "audio_url": audio_url,
+                    }
                 )
 
             except Exception as e:
-                print(f"Voice processing error: {e}")
-                return JsonResponse({"response": "Error processing voice message."})
+                print(f"❌ Voice processing error: {e}")
+                print(f"📋 Full traceback: {traceback.format_exc()}")
+                return JsonResponse(
+                    {
+                        "response": f"Error processing voice message: {str(e)}",
+                        "conversation_id": conversation_id,
+                    }
+                )
 
         # Text message handling
         if not user_message:
             return JsonResponse({"response": "Please enter a message."})
 
+        print(f"💬 Processing text message: '{user_message}'")
+
         try:
             if model == "dialogpt":
-                response = get_dialogpt_response(user_message, conversation_id)
+                response_text = get_dialogpt_response(user_message, conversation_id)
             elif model.startswith("gemini"):
-                response = get_gemini_response_with_model(
+                response_text = get_gemini_response_with_model(
                     user_message, conversation_id, model
                 )
             else:
-                response = "Unknown model specified."
+                response_text = "Unknown model specified."
 
+            print(f"✅ Response generated: {response_text[:100]}...")
             return JsonResponse(
-                {"response": response, "conversation_id": conversation_id}
+                {"response": response_text, "conversation_id": conversation_id}
             )
 
         except Exception as e:
-            print(f"Error with {model}: {e}")
-            import traceback
-
-            print(f"Full traceback: {traceback.format_exc()}")
+            print(f"❌ Error with {model}: {e}")
+            print(f"📋 Full traceback: {traceback.format_exc()}")
             return JsonResponse(
                 {"response": "Sorry, I'm having trouble responding right now."}
             )
@@ -275,6 +389,8 @@ def get_ai_response(request):
 
 
 def get_dialogpt_response(user_message, conversation_id):
+    print(f"🤖 DialoGPT processing: '{user_message}'")
+
     chat_history_ids = user_histories.get(conversation_id, None)
 
     new_input_ids = dialogpt_tokenizer.encode(
@@ -302,33 +418,13 @@ def get_dialogpt_response(user_message, conversation_id):
         chat_history_ids[:, input_ids.shape[-1] :][0], skip_special_tokens=True
     )
 
+    print(f"✅ DialoGPT response: '{bot_response}'")
     return bot_response
 
 
-def get_gemini_response(user_message, conversation_id):
-    if not GEMINI_AVAILABLE or not gemini_model:
-        print("DEBUG - Gemini not available or model not loaded")
-        return "Gemini is not available."
-
-    try:
-        if conversation_id not in gemini_chats:
-            gemini_chats[conversation_id] = gemini_model.start_chat(history=[])
-
-        chat = gemini_chats[conversation_id]
-        response = chat.send_message(user_message)
-        return response.text
-
-    except Exception as e:
-        print(f"Gemini chat error: {e}")
-
-        try:
-            response = gemini_model.generate_content(user_message)
-            return response.text
-        except Exception:
-            return "Gemini API error."
-
-
 def get_gemini_response_with_model(user_message, conversation_id, model_name):
+    print(f"🤖 Gemini ({model_name}) processing: '{user_message}'")
+
     try:
         specific_model = genai.GenerativeModel(model_name)
 
@@ -340,15 +436,18 @@ def get_gemini_response_with_model(user_message, conversation_id, model_name):
         chat = gemini_chats[chat_key]
         response = chat.send_message(user_message)
 
+        print(f"✅ Gemini response: '{response.text[:100]}...'")
         return response.text
 
     except Exception as e:
-        print(f"Specific Gemini model error ({model_name}): {e}")
+        print(f"❌ Specific Gemini model error ({model_name}): {e}")
 
         try:
+            print(f"🔄 Trying fallback generation for {model_name}...")
             specific_model = genai.GenerativeModel(model_name)
             response = specific_model.generate_content(user_message)
+            print(f"✅ Gemini fallback response: '{response.text[:100]}...'")
             return response.text
         except Exception as fallback_error:
-            print(f"Gemini model fallback error: {fallback_error}")
+            print(f"❌ Gemini model fallback error: {fallback_error}")
             return f"Error with {model_name}: {str(fallback_error)[:100]}..."

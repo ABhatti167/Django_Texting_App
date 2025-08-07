@@ -44,6 +44,28 @@
             border-color: #037ff3;
             text-align: left;
         }
+
+        .recording-btn {
+            transition: all 0.3s ease;
+        }
+
+        .recording-btn.recording {
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
     </style>
 </head>
 
@@ -51,7 +73,7 @@
     <div class="container-fluid mt-5 px-4">
         <h2 class="text-center mb-4">AI Chat</h2>
 
-        <!-- Model Buttons (unchanged) -->
+        <!-- Model Buttons -->
         <div class="d-flex justify-content-center mb-3 gap-2 flex-wrap">
             <a href="{% url 'ai_chat_with_model' 'dialogpt' %}?username={{ username }}"
                 class="btn btn-primary {% if model == 'dialogpt' %}active{% endif %}">
@@ -96,7 +118,7 @@
             </small>
         </div>
 
-        <!-- 🟢 CHAT CONTAINER (now bigger) -->
+        <!-- 🟢 CHAT CONTAINER -->
         <div class="card mx-auto shadow" style="max-width: 1100px;">
             <div class="card-body">
                 <div id="chat-box" style="height: 650px; overflow-y: auto; border: 1px solid #ddd; padding: 10px;">
@@ -110,19 +132,25 @@
 
                     {% if model_type == 'voice' %}
                     <!-- Voice model UI -->
-                    <div class="voice-interface text-center">
+                    <div class="voice-interface text-center mt-4">
+                        <!-- Voice Button -->
                         <div class="mb-3">
-                            <button type="button" id="voice-btn" class="btn btn-danger btn-lg">
+                            <button type="button" id="voice-btn" class="btn btn-danger btn-lg px-4 py-3 recording-btn">
                                 🎤 Hold to Speak
                             </button>
-                            <div id="recording-status" class="mt-2" style="display: none;">
-                                <span class="text-danger">🔴 Recording... Release to send</span>
+                            <!-- Recording Status Message -->
+                            <div id="recording-status" class="mt-3" style="display: none;">
+                                <span class="text-danger fw-bold">🔴 Recording... Release to send</span>
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <small class="text-muted">This model supports voice input and output</small>
+
+                        <!-- Voice Input/Output Info -->
+                        <div class="mb-2">
+                            <small class="text-muted fst-italic">This model supports voice input and audio
+                                output.</small>
                         </div>
                     </div>
+
                     {% else %}
                     <!-- Text model UI -->
                     <div class="input-group">
@@ -143,7 +171,6 @@
     <!-- Bootstrap Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
-
     <script>
         const chatBox = document.getElementById('chat-box');
         const chatForm = document.getElementById('chat-form');
@@ -153,10 +180,10 @@
 
         // Voice recording variables
         let mediaRecorder;
-        let recordedChunks = [];
-        let isRecording = false;
+        let audioChunks = [];
+        let recording = false;
 
-        // Get CSRF token
+        // Get CSRF token helper
         function getCookie(name) {
             let cookieValue = null;
             if (document.cookie && document.cookie !== '') {
@@ -172,68 +199,162 @@
             return cookieValue;
         }
 
-        // Voice recording setup for Live model
+        // Play audio response
+        function playAudioResponse(audioUrl) {
+            const audio = new Audio(audioUrl);
+            audio.play().catch(err => console.error('Audio playback failed:', err));
+        }
+
+        // Append message to chat
+        function appendMessage(sender, text, userType, messageId = null) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'chat-message ' + userType;
+            if (messageId) messageElement.id = messageId;
+            messageElement.innerHTML = `<b>${sender}</b><p>${text}</p><span class="time-left">${new Date().toLocaleTimeString()}</span>`;
+            chatBox.appendChild(messageElement);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
         if (modelType === 'voice') {
             const voiceBtn = document.getElementById('voice-btn');
             const recordingStatus = document.getElementById('recording-status');
 
-            // Request microphone access
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    mediaRecorder = new MediaRecorder(stream);
+            // Add event listeners with proper event handling
+            voiceBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                startRecording();
+            });
+
+            voiceBtn.addEventListener('mouseup', (e) => {
+                e.preventDefault();
+                if (recording) stopRecording();
+            });
+
+            voiceBtn.addEventListener('mouseleave', (e) => {
+                if (recording) stopRecording();
+            });
+
+            // Touch events for mobile
+            voiceBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                startRecording();
+            });
+
+            voiceBtn.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                if (recording) stopRecording();
+            });
+
+            async function startRecording() {
+                if (recording) return;
+
+                try {
+                    console.log('Requesting microphone access...');
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            sampleRate: 44100,
+                            channelCount: 1,
+                            volume: 1.0
+                        }
+                    });
+
+                    console.log('Microphone access granted');
+
+                    // Reset audio chunks
+                    audioChunks = [];
+
+                    // Use WebM format consistently - no conversion needed
+                    let options = {
+                        mimeType: 'audio/webm'
+                    };
+
+                    // Fallback if webm is not supported
+                    if (!MediaRecorder.isTypeSupported('audio/webm')) {
+                        if (MediaRecorder.isTypeSupported('audio/mp4')) {
+                            options.mimeType = 'audio/mp4';
+                        } else {
+                            options = {}; // Use default
+                        }
+                    }
+
+                    console.log('Using audio format:', options.mimeType || 'default');
+
+                    mediaRecorder = new MediaRecorder(stream, options);
 
                     mediaRecorder.ondataavailable = (event) => {
                         if (event.data.size > 0) {
-                            recordedChunks.push(event.data);
+                            audioChunks.push(event.data);
                         }
                     };
 
-                    mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(recordedChunks, { type: 'audio/webm' });
-                        recordedChunks = [];
-                        await sendVoiceMessage(audioBlob);
+                    mediaRecorder.onstop = () => {
+                        console.log('Recording stopped');
+                        const audioBlob = new Blob(audioChunks, { type: options.mimeType || 'audio/webm' });
+                        console.log('Created audio blob:', audioBlob.size, 'bytes, type:', audioBlob.type);
+
+                        // Stop all tracks to release microphone
+                        stream.getTracks().forEach(track => track.stop());
+
+                        // Send the audio - always use webm filename
+                        sendVoiceMessage(audioBlob, 'voice_message.webm');
                     };
-                })
-                .catch(err => {
-                    console.error('Microphone access denied:', err);
-                    appendMessage('System', 'Microphone access is required for voice chat.', 'AI');
-                });
 
-            // Voice button events
-            voiceBtn.addEventListener('mousedown', startRecording);
-            voiceBtn.addEventListener('mouseup', stopRecording);
-            voiceBtn.addEventListener('mouseleave', stopRecording);
-            voiceBtn.addEventListener('touchstart', startRecording);
-            voiceBtn.addEventListener('touchend', stopRecording);
+                    mediaRecorder.onerror = (event) => {
+                        console.error('MediaRecorder error:', event.error);
+                        appendMessage('System', 'Recording error: ' + event.error.message, 'AI');
+                    };
 
-            function startRecording() {
-                if (mediaRecorder && !isRecording) {
-                    recordedChunks = [];
                     mediaRecorder.start();
-                    isRecording = true;
+                    recording = true;
+
+                    // Update UI
                     voiceBtn.textContent = '🔴 Recording...';
-                    voiceBtn.classList.add('btn-outline-danger');
+                    voiceBtn.classList.add('recording', 'btn-outline-danger');
                     voiceBtn.classList.remove('btn-danger');
                     recordingStatus.style.display = 'block';
+
+                    console.log('Recording started');
+
+                } catch (err) {
+                    console.error('Error accessing microphone:', err);
+                    let errorMessage = 'Microphone access is required for voice chat.';
+
+                    if (err.name === 'NotAllowedError') {
+                        errorMessage = 'Microphone permission denied. Please allow microphone access and try again.';
+                    } else if (err.name === 'NotFoundError') {
+                        errorMessage = 'No microphone found. Please check your audio devices.';
+                    } else if (err.name === 'NotReadableError') {
+                        errorMessage = 'Microphone is being used by another application.';
+                    }
+
+                    appendMessage('System', errorMessage, 'AI');
                 }
             }
 
             function stopRecording() {
-                if (mediaRecorder && isRecording) {
+                if (!recording || !mediaRecorder) return;
+
+                console.log('Stopping recording...');
+                recording = false;
+
+                // Update UI immediately
+                voiceBtn.textContent = '🎤 Hold to Speak';
+                voiceBtn.classList.remove('recording', 'btn-outline-danger');
+                voiceBtn.classList.add('btn-danger');
+                recordingStatus.style.display = 'none';
+
+                // Stop recording
+                if (mediaRecorder.state === 'recording') {
                     mediaRecorder.stop();
-                    isRecording = false;
-                    voiceBtn.textContent = '🎤 Hold to Speak';
-                    voiceBtn.classList.remove('btn-outline-danger');
-                    voiceBtn.classList.add('btn-danger');
-                    recordingStatus.style.display = 'none';
                 }
             }
 
-            async function sendVoiceMessage(audioBlob) {
+            async function sendVoiceMessage(audioBlob, filename = 'voice_message.webm') {
+                console.log('Sending voice message, blob size:', audioBlob.size, 'filename:', filename);
                 appendMessage('You', '🎤 Voice message sent', 'user');
 
                 const data = new FormData();
-                data.append('audio', audioBlob, 'voice_message.webm');
+                data.append('audio', audioBlob, filename);
                 data.append('conversation_id', conversationIdInput.value);
                 data.append('model', document.getElementById('model').value);
                 data.append('message_type', 'voice');
@@ -250,13 +371,14 @@
                         body: data
                     });
 
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
                     const result = await response.json();
 
-                    // Remove loading message
                     const loadingElement = document.getElementById(loadingId);
-                    if (loadingElement) {
-                        loadingElement.remove();
-                    }
+                    if (loadingElement) loadingElement.remove();
 
                     if (result.conversation_id) {
                         conversationIdInput.value = result.conversation_id;
@@ -264,37 +386,27 @@
 
                     appendMessage('AI', result.response, 'AI');
 
-                    // If response includes audio, play it
                     if (result.audio_url) {
                         playAudioResponse(result.audio_url);
                     }
 
                     chatBox.scrollTop = chatBox.scrollHeight;
                 } catch (error) {
-                    console.error('Error:', error);
+                    console.error('Error sending voice message:', error);
                     const loadingElement = document.getElementById(loadingId);
-                    if (loadingElement) {
-                        loadingElement.remove();
-                    }
-                    appendMessage('AI', 'Error: Unable to process voice message.', 'AI');
+                    if (loadingElement) loadingElement.remove();
+                    appendMessage('AI', 'Error: Unable to process voice message. ' + error.message, 'AI');
                 }
             }
 
-            function playAudioResponse(audioUrl) {
-                const audio = new Audio(audioUrl);
-                audio.play().catch(err => console.error('Audio playback failed:', err));
-            }
-        }
-
-        // Text chat for non-voice models
-        if (modelType !== 'voice') {
+        } else {
+            // Text chat handling for non-voice models
             chatForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
 
                 const message = messageInput.value.trim();
                 if (!message) return;
 
-                // Show user message
                 appendMessage('You', message, 'user');
 
                 const data = new FormData();
@@ -302,10 +414,8 @@
                 data.append('conversation_id', conversationIdInput.value);
                 data.append('model', document.getElementById('model').value);
 
-                // Clear input
                 messageInput.value = '';
 
-                // Show loading message
                 const loadingId = 'loading_' + Date.now();
                 appendMessage('AI', 'Thinking...', 'AI', loadingId);
 
@@ -320,13 +430,9 @@
 
                     const result = await response.json();
 
-                    // Remove loading message
                     const loadingElement = document.getElementById(loadingId);
-                    if (loadingElement) {
-                        loadingElement.remove();
-                    }
+                    if (loadingElement) loadingElement.remove();
 
-                    // Update conversation ID if provided by server
                     if (result.conversation_id) {
                         conversationIdInput.value = result.conversation_id;
                     }
@@ -335,25 +441,11 @@
                     chatBox.scrollTop = chatBox.scrollHeight;
                 } catch (error) {
                     console.error('Error:', error);
-                    // Remove loading message
                     const loadingElement = document.getElementById(loadingId);
-                    if (loadingElement) {
-                        loadingElement.remove();
-                    }
+                    if (loadingElement) loadingElement.remove();
                     appendMessage('AI', 'Error: Unable to get response.', 'AI');
                 }
             });
-        }
-
-        function appendMessage(sender, text, userType, messageId = null) {
-            const messageElement = document.createElement('div');
-            messageElement.className = 'chat-message ' + userType;
-            if (messageId) {
-                messageElement.id = messageId;
-            }
-            messageElement.innerHTML = `<b>${sender}</b><p>${text}</p><span class="time-left">${new Date().toLocaleTimeString()}</span>`;
-            chatBox.appendChild(messageElement);
-            chatBox.scrollTop = chatBox.scrollHeight;
         }
     </script>
 </body>
