@@ -1,4 +1,3 @@
-````markdown
 # DjChat - AI-Powered Chat Application with Django
 
 ![DjChat Demo](https://via.placeholder.com/800x400?text=DjChat+Demo+GIF)
@@ -100,8 +99,6 @@ GEMINI_API_KEY=your_google_api_key
 DEBUG=True
 SECRET_KEY=your_django_secret_key
 ALLOWED_HOSTS=localhost,127.0.0.1
-````
-
 For HTTPS (required for microphone access):
 
 ```bash
