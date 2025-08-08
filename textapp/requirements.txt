@@ -6,3 +6,4 @@ google-generativeai
 SpeechRecognition
 pydub
 gtts
+django-allauth

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Login - DjChat</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        .google-btn {
+            transition: all 0.3s ease;
+            border: 2px solid #4285f4;
+        }
+
+        .google-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
+        }
+
+        .login-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .login-card {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+
+    <!-- Redirect to home if already authenticated -->
+    {% if user.is_authenticated %}
+    <script>
+        window.location.href = "{% url 'home' %}";
+    </script>
+    {% endif %}
+</head>
+
+<body class="login-container d-flex align-items-center justify-content-center">
+
+    <div class="text-center p-5 login-card shadow-lg" style="width: 100%; max-width: 450px;">
+        <div class="mb-4">
+            <h1 class="display-6 fw-bold text-primary mb-2">🚀 DjChat</h1>
+            <p class="text-muted">Connect, Chat, and Collaborate</p>
+        </div>
+
+        {% if messages %}
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        <div class="d-grid gap-3">
+            <!-- Updated login URL with next parameter -->
+            <a href="{% url 'social:begin' 'google-oauth2' %}{% if request.GET.next %}?next={{ request.GET.next }}{% endif %}"
+                class="btn btn-outline-primary google-btn btn-lg py-3">
+                <img src="https://developers.google.com/identity/images/g-logo.png" alt="Google logo"
+                    style="width: 24px; margin-right: 12px; vertical-align: middle;">
+                <span class="fw-semibold">Continue with Google</span>
+            </a>
+
+            <div class="text-center mt-3">
+                <small class="text-muted">
+                    Secure login powered by Google OAuth
+                </small>
+            </div>
+        </div>
+
+        <hr class="my-4">
+
+        <div class="row text-center">
+            <div class="col-4">
+                <div class="text-primary">
+                    <i class="fas fa-comments" style="font-size: 2rem;"></i>
+                    <small class="d-block mt-1 text-muted">Group Chat</small>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="text-success">
+                    <i class="fas fa-robot" style="font-size: 2rem;"></i>
+                    <small class="d-block mt-1 text-muted">AI Chat</small>
+                </div>
+            </div>
+            <div class="col-4">
+                <div class="text-warning">
+                    <i class="fas fa-microphone" style="font-size: 2rem;"></i>
+                    <small class="d-block mt-1 text-muted">Voice Chat</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</body>
+
+</html>

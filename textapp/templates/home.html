@@ -5,43 +5,204 @@
     <meta charset="UTF-8" />
     <title>Django Chat Home</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        .main-container {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .chat-card {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .action-btn {
+            transition: all 0.3s ease;
+            border-radius: 15px;
+            padding: 15px;
+            font-weight: 600;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+        }
+
+        .user-info {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .room-input {
+            border-radius: 15px;
+            border: 2px solid #e3f2fd;
+            padding: 12px 20px;
+        }
+
+        .room-input:focus {
+            border-color: #2196f3;
+            box-shadow: 0 0 0 0.2rem rgba(33, 150, 243, 0.25);
+        }
+
+        .alert {
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+    </style>
 </head>
 
-<body class="bg-light">
-    <div class="container mt-5">
-        <h2 class="text-center mb-4">Django Chat</h2>
+<body class="main-container">
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-6 col-md-8">
+                <!-- Display Messages -->
+                {% if messages %}
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endfor %}
+                {% endif %}
 
-        <div class="card mx-auto shadow" style="max-width: 500px;">
-            <div class="card-body">
-                <form id="post-form" method="POST" action="{% url 'checkview' %}">
-                    {% csrf_token %}
-                    <div class="mb-3">
-                        <label for="room_name" class="form-label">Room Name</label>
-                        <input type="text" class="form-control" name="room_name" id="room_name" required />
+                <!-- User Welcome Card -->
+                <div class="user-info text-white text-center mb-4">
+                    <h2 class="mb-2">👋 Welcome back, {{ user.get_full_name|default:user.username }}!</h2>
+                    <small class="opacity-75">Ready to chat?</small>
+                </div>
+
+                <!-- Main Chat Options Card -->
+                <div class="chat-card shadow-lg p-4">
+                    <div class="text-center mb-4">
+                        <h3 class="text-primary mb-2">🚀 DjChat Dashboard</h3>
+                        <p class="text-muted">Choose your chat experience</p>
                     </div>
-                    <div class="mb-3">
-                        <label for="username" class="form-label">Username</label>
-                        <input type="text" class="form-control" name="username" id="username" required />
+
+                    <!-- Room Creation Form with explicit action handling -->
+                    <form method="POST" action="/checkview/"
+                        onsubmit="console.log('Form submitted with action:', event.submitter.value)">
+                        {% csrf_token %}
+
+                        <!-- Room Selection -->
+                        <div class="mb-4">
+                            <label for="room_name" class="form-label fw-bold text-primary">
+                                🏠 Join or Create a Room
+                            </label>
+                            <input type="text" class="form-control room-input" name="room_name" id="room_name"
+                                placeholder="Enter room name (e.g., general, gaming, work...)" required minlength="3"
+                                maxlength="100" />
+                            <small class="text-muted mt-2 d-block">
+                                💡 Tip: Room names are case-sensitive and will be created if they don't exist
+                            </small>
+                        </div>
+
+                        <!-- Action Buttons with explicit values -->
+                        <div class="d-grid gap-3">
+                            <button type="submit" class="btn btn-primary action-btn" name="action" value="enter_room"
+                                onclick="console.log('Enter room button clicked')">
+                                <i class="fas fa-users me-2"></i>
+                                <span id="enter-btn-text">Enter Chat Room</span>
+                            </button>
+
+                            <div class="text-center">
+                                <small class="text-muted">or</small>
+                            </div>
+
+                            <button type="submit" class="btn btn-success action-btn" name="action" value="chat_ai"
+                                onclick="console.log('AI chat button clicked')">
+                                <i class="fas fa-robot me-2"></i>
+                                Chat with AI
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Quick Test Button -->
+                    <hr class="my-4">
+                    <div class="text-center">
+                        <small class="text-muted">Debug Tools</small><br>
+                        <a href="/test-room-model/" class="btn btn-outline-primary btn-sm mt-2" target="_blank">
+                            🔧 Test Room Model
+                        </a>
                     </div>
-                    <div class="mb-3">
-                        <button type="submit" class="btn btn-primary w-100" name="action" value="enter_room">
-                            Enter Room
-                        </button>
+
+                    <!-- Features Info -->
+                    <hr class="my-4">
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="text-primary">
+                                <i class="fas fa-comments fs-3"></i>
+                                <small class="d-block mt-2 text-muted">Real-time<br>Group Chat</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="text-success">
+                                <i class="fas fa-brain fs-3"></i>
+                                <small class="d-block mt-2 text-muted">Multiple<br>AI Models</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="text-warning">
+                                <i class="fas fa-microphone fs-3"></i>
+                                <small class="d-block mt-2 text-muted">Voice<br>Integration</small>
+                            </div>
+                        </div>
                     </div>
-                    <div class="mb-3">
-                        <button type="submit" class="btn btn-success w-100" name="action" value="chat_ai">
-                            Chat with AI
-                        </button>
-                    </div>
-                </form>
+                </div>
+
+                <!-- Logout Button -->
+                <div class="text-center mt-4">
+                    <a href="{% url 'auth:logout' %}" class="btn btn-outline-light">
+                        <i class="fas fa-sign-out-alt me-2"></i>
+                        Logout
+                    </a>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Bootstrap JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const roomInput = document.getElementById('room_name');
+            const enterBtnText = document.getElementById('enter-btn-text');
+
+            console.log('🚀 Home page loaded');
+
+            // Update button text when typing
+            roomInput.addEventListener('input', function () {
+                const value = this.value.trim();
+                if (value && value.length >= 3) {
+                    enterBtnText.textContent = `Enter "${value}" Room`;
+                } else {
+                    enterBtnText.textContent = 'Enter Chat Room';
+                }
+            });
+
+            // Test form submission
+            document.querySelector('form').addEventListener('submit', function (e) {
+                const roomName = roomInput.value.trim();
+                const action = e.submitter ? e.submitter.value : 'unknown';
+
+                console.log('📝 Form submission details:');
+                console.log('- Room name:', roomName);
+                console.log('- Action:', action);
+                console.log('- Submitter:', e.submitter);
+
+                if (!roomName && action === 'enter_room') {
+                    e.preventDefault();
+                    alert('Please enter a room name!');
+                    return false;
+                }
+            });
+        });
+    </script>
 </body>
 
 </html>
