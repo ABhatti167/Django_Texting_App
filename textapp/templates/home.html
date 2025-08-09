@@ -156,10 +156,12 @@
 
                 <!-- Logout Button -->
                 <div class="text-center mt-4">
-                    <a href="{% url 'auth:logout' %}" class="btn btn-outline-light">
-                        <i class="fas fa-sign-out-alt me-2"></i>
-                        Logout
-                    </a>
+                    <form method="post" action="{% url 'auth:logout' %}" style="display: inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger action-btn">
+                            <i class="fas fa-sign-out-alt me-2"></i>Logout
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>

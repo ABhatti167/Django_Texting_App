@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import traceback
+import wave
 from datetime import timedelta
 from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse, JsonResponse
@@ -19,6 +20,8 @@ from django.core.paginator import Paginator
 from django.db.models import Q, Count
 from django.contrib import messages
 from django.conf import settings
+import speech_recognition as sr
+from gtts import gTTS
 
 # AI Libraries
 try:
@@ -31,12 +34,6 @@ try:
     import google.generativeai as genai
 except ImportError:
     print("Google AI not installed - Gemini will not be available")
-
-try:
-    import speech_recognition as sr
-    from gtts import gTTS
-except ImportError:
-    print("Speech libraries not installed - Voice features will not be available")
 
 from textpage.models import (
     Room,
@@ -537,29 +534,149 @@ def ai_chat_with_model(request, model):
 
 @login_required(login_url="/auth/login/")
 @require_POST
+@csrf_exempt
 def get_ai_response(request):
-    """Fixed AI response handler with proper error handling"""
+    """Enhanced AI response handler with audio validation"""
     try:
-        # Parse JSON data
-        data = json.loads(request.body)
-        user_message = data.get("message", "").strip()
-        conversation_id = data.get("conversation_id", str(uuid.uuid4()))
-        model = data.get("model", "gemini-2.5-flash")
-        message_type = data.get("message_type", "text")
+        # Initialize variables
+        user_message = ""
+        conversation_id = ""
+        model = ""
+        message_type = "text"
         username = request.user.get_full_name() or request.user.username
+        audio_file = None
+        audio_url = None
+
+        # Handle different content types
+        if request.content_type == "application/json":
+            try:
+                data = json.loads(request.body)
+                user_message = data.get("message", "").strip()
+                conversation_id = data.get("conversation_id", str(uuid.uuid4()))
+                model = data.get("model", "gemini-2.5-flash")
+                message_type = data.get("message_type", "text")
+            except json.JSONDecodeError:
+                return JsonResponse({"error": "Invalid JSON data"}, status=400)
+
+        elif request.content_type.startswith("multipart/form-data"):
+            # Handle voice requests
+            conversation_id = request.POST.get("conversation_id", str(uuid.uuid4()))
+            model = request.POST.get("model", "gemini-live-2.5-flash-preview")
+            message_type = "voice"
+            audio_file = request.FILES.get("audio")
+
+            # Validate audio file
+            if not audio_file:
+                return JsonResponse(
+                    {
+                        "error": "No audio file provided",
+                        "conversation_id": conversation_id,
+                    },
+                    status=400,
+                )
+
+            # Check minimum file size (1KB)
+            if audio_file.size < 1024:
+                return JsonResponse(
+                    {
+                        "error": "Audio file too small. Please speak louder and try again.",
+                        "conversation_id": conversation_id,
+                    },
+                    status=400,
+                )
+
+            try:
+                logger.info(
+                    f"Received audio file: {audio_file.name}, size: {audio_file.size}, type: {audio_file.content_type}"
+                )
+
+                # Create recognizer instance
+                recognizer = sr.Recognizer()
+
+                # Configure recognition settings
+                recognizer.energy_threshold = 300
+                recognizer.dynamic_energy_threshold = True
+                recognizer.pause_threshold = 0.8
+                recognizer.phrase_threshold = 0.3
+
+                # Save audio to temporary file
+                with tempfile.NamedTemporaryFile(
+                    suffix=".wav", delete=False
+                ) as tmp_audio:
+                    for chunk in audio_file.chunks():
+                        tmp_audio.write(chunk)
+                    tmp_audio_path = tmp_audio.name
+
+                logger.info(f"Saved audio to temporary file: {tmp_audio_path}")
+
+                # Process audio file
+                try:
+                    with sr.AudioFile(tmp_audio_path) as source:
+                        recognizer.adjust_for_ambient_noise(source, duration=0.2)
+                        audio_data = recognizer.record(source)
+                        user_message = recognizer.recognize_google(
+                            audio_data, language="en-US"
+                        )
+                        logger.info(
+                            f"Successfully transcribed: {user_message[:100]}..."
+                        )
+                except sr.UnknownValueError:
+                    logger.error("Speech recognition could not understand audio")
+                    return JsonResponse(
+                        {
+                            "error": "Could not understand the audio. Please speak more clearly and try again.",
+                            "conversation_id": conversation_id,
+                        },
+                        status=400,
+                    )
+                except sr.RequestError as e:
+                    logger.error(f"Speech recognition service error: {e}")
+                    return JsonResponse(
+                        {
+                            "error": "Speech recognition service is currently unavailable. Please try again later.",
+                            "conversation_id": conversation_id,
+                        },
+                        status=503,
+                    )
+                finally:
+                    # Clean up temporary file
+                    try:
+                        os.unlink(tmp_audio_path)
+                    except Exception as e:
+                        logger.warning(f"Error deleting temp file: {e}")
+            except Exception as e:
+                logger.error(f"Error processing audio: {e}")
+                return JsonResponse(
+                    {
+                        "error": "Could not process the audio file. Please try again.",
+                        "conversation_id": conversation_id,
+                    },
+                    status=400,
+                )
+        else:
+            return JsonResponse({"error": "Unsupported content type"}, status=400)
 
         logger.info(
-            f"AI request received - Model: {model}, User: {username}, Message: {user_message[:50]}..."
+            f"AI request - Type: {message_type}, Model: {model}, User: {username}"
         )
 
         # Validate input
         if not user_message:
             logger.warning("Empty message received")
-            return JsonResponse({"error": "Please enter a message"}, status=400)
+            return JsonResponse(
+                {
+                    "error": "Please provide a message",
+                    "conversation_id": conversation_id,
+                },
+                status=400,
+            )
 
         if len(user_message) > 5000:
             logger.warning("Message too long")
-            return JsonResponse({"error": "Message too long"}, status=400)
+            return JsonResponse(
+                {"error": "Message too long", "conversation_id": conversation_id},
+                status=400,
+            )
 
         # Map to actual API model
         api_model = MODEL_MAPPING.get(model, "gemini-1.5-flash")
@@ -577,12 +694,8 @@ def get_ai_response(request):
                     "is_active": True,
                 },
             )
-            logger.info(
-                f"Conversation {'created' if created else 'retrieved'}: {conversation_id}"
-            )
         except Exception as e:
             logger.error(f"Error with conversation history: {e}")
-            # Continue without conversation history if there's an issue
             conversation_obj = None
 
         # Generate AI response
@@ -597,9 +710,7 @@ def get_ai_response(request):
                     user_message, api_model, conversation_obj
                 )
             else:
-                logger.error(
-                    f"Model not available: {api_model}, GEMINI_AVAILABLE: {GEMINI_AVAILABLE}, DIALOGPT_AVAILABLE: {DIALOGPT_AVAILABLE}"
-                )
+                logger.error(f"Model not available: {api_model}")
                 return JsonResponse(
                     {
                         "error": f"Model {model} is not available. Please try a different model.",
@@ -625,6 +736,26 @@ def get_ai_response(request):
                 status=500,
             )
 
+        # Generate audio response for voice requests
+        if message_type == "voice":
+            try:
+                # Create text-to-speech audio
+                tts = gTTS(text=response_text, lang="en")
+
+                # Create in-memory audio file
+                audio_buffer = io.BytesIO()
+                tts.write_to_fp(audio_buffer)
+                audio_buffer.seek(0)
+
+                # Encode as base64 for direct playback
+                audio_base64 = base64.b64encode(audio_buffer.read()).decode("utf-8")
+                audio_url = f"data:audio/mpeg;base64,{audio_base64}"
+
+                logger.info("Generated audio response")
+            except Exception as e:
+                logger.error(f"Error generating audio: {e}")
+                audio_url = None
+
         # Update conversation history if available
         if conversation_obj:
             try:
@@ -634,6 +765,7 @@ def get_ai_response(request):
                         "user_message": user_message,
                         "ai_response": response_text,
                         "timestamp": timezone.now().isoformat(),
+                        "message_type": message_type,
                     }
                 )
 
@@ -649,14 +781,39 @@ def get_ai_response(request):
             except Exception as e:
                 logger.error(f"Error updating conversation history: {e}")
 
+        # Update user profile stats
+        try:
+            profile, created = UserProfile.objects.get_or_create(
+                user=request.user,
+                defaults={
+                    "total_messages_sent": 0,
+                    "total_ai_conversations": 0,
+                },
+            )
+            if message_type == "voice":
+                if hasattr(profile, "total_voice_messages"):
+                    profile.total_voice_messages += 1
+                else:
+                    profile.total_messages_sent += 1
+            else:
+                profile.total_messages_sent += 1
+
+            profile.total_ai_conversations += 1
+            profile.save()
+        except Exception as profile_error:
+            logger.warning(f"Profile update failed: {profile_error}")
+
         logger.info(f"AI response generated successfully for {username}")
-        return JsonResponse(
-            {
-                "response": response_text,
-                "conversation_id": conversation_id,
-                "model_used": model,
-            }
-        )
+        response_data = {
+            "response": response_text,
+            "conversation_id": conversation_id,
+            "model_used": model,
+        }
+
+        if audio_url:
+            response_data["audio_url"] = audio_url
+
+        return JsonResponse(response_data)
 
     except Exception as e:
         logger.error(f"Unexpected error in get_ai_response: {e}")
@@ -824,21 +981,3 @@ def test_gemini_connection(request):
         error_result = f"❌ Gemini API test failed: {e}\n"
         error_result += f"Error details: {traceback.format_exc()}\n"
         return HttpResponse(error_result, content_type="text/plain; charset=utf-8")
-# Add these helper functions to your views.py if they're missing or incorrect:
-
-
-def get_client_ip(request):
-    """Get client IP address from request"""
-    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-    if x_forwarded_for:
-        ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        ip = request.META.get("REMOTE_ADDR")
-    return ip
-
-
-def get_user_agent(request):
-    """Get user agent from request"""
-    return request.META.get("HTTP_USER_AGENT", "")[
-        :500
-    ]  # Limit length to prevent DB errors
